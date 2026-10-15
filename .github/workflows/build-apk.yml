@@ -47,6 +47,55 @@ jobs:
           M=android/app/src/main/AndroidManifest.xml
           sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n    <application#' "$M"
           grep -n -E "CAMERA|camera" "$M"
+          J=android/app/src/main/java/com/warungq/app/MainActivity.java
+          test -f "$J" || { echo "MainActivity tidak ditemukan"; find android -name MainActivity.java; exit 1; }
+          cat > "$J" <<'JAVA'
+          package com.warungq.app;
+
+          import android.graphics.Color;
+          import android.graphics.drawable.ColorDrawable;
+          import android.graphics.drawable.Drawable;
+          import android.graphics.drawable.LayerDrawable;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.Window;
+          import androidx.core.graphics.Insets;
+          import androidx.core.view.ViewCompat;
+          import androidx.core.view.WindowCompat;
+          import androidx.core.view.WindowInsetsCompat;
+          import androidx.core.view.WindowInsetsControllerCompat;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  final Window window = getWindow();
+                  WindowCompat.setDecorFitsSystemWindows(window, false);
+                  View content = findViewById(android.R.id.content);
+                  WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, content);
+                  controller.setAppearanceLightStatusBars(false);
+                  controller.setAppearanceLightNavigationBars(true);
+                  final int indigo = Color.parseColor("#4338CA");
+                  final int light = Color.parseColor("#F1F5F9");
+                  ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
+                      Insets b = insets.getInsets(
+                          WindowInsetsCompat.Type.systemBars()
+                              | WindowInsetsCompat.Type.displayCutout()
+                              | WindowInsetsCompat.Type.ime());
+                      v.setPadding(b.left, b.top, b.right, b.bottom);
+                      LayerDrawable bg = new LayerDrawable(new Drawable[] {
+                          new ColorDrawable(light), new ColorDrawable(indigo) });
+                      bg.setLayerGravity(1, Gravity.TOP);
+                      bg.setLayerHeight(1, b.top);
+                      window.getDecorView().setBackground(bg);
+                      return WindowInsetsCompat.CONSUMED;
+                  });
+                  ViewCompat.requestApplyInsets(content);
+              }
+          }
+          JAVA
           npx cap sync android
           cd android
           chmod +x gradlew
