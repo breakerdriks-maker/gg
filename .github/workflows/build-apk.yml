@@ -44,6 +44,12 @@ jobs:
         working-directory: ${{ env.P }}
         run: |
           npx cap add android
+          # Ikon aplikasi & layar splash
+          RES=android/app/src/main/res
+          if [ -d android-res ]; then
+            cp -r android-res/mipmap-* "$RES"/
+            find "$RES" -name 'splash.png' -exec cp android-res/splash.png {} \;
+          fi
           M=android/app/src/main/AndroidManifest.xml
           sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n    <uses-feature android:name="android.hardware.usb.host" android:required="false" />\n    <application#' "$M"
           grep -n -E "CAMERA|camera" "$M"
