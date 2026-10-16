@@ -45,32 +45,74 @@ jobs:
         run: |
           npx cap add android
           M=android/app/src/main/AndroidManifest.xml
-          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n    <application#' "$M"
+          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n    <uses-feature android:name="android.hardware.usb.host" android:required="false" />\n    <application#' "$M"
           grep -n -E "CAMERA|camera" "$M"
           J=android/app/src/main/java/com/warungq/app/MainActivity.java
           test -f "$J" || { echo "MainActivity tidak ditemukan"; find android -name MainActivity.java; exit 1; }
           cat > "$J" <<'JAVA'
           package com.warungq.app;
 
+          import android.content.Context;
+          import android.content.Intent;
           import android.graphics.Color;
           import android.graphics.drawable.ColorDrawable;
           import android.graphics.drawable.Drawable;
           import android.graphics.drawable.LayerDrawable;
           import android.os.Bundle;
+          import android.print.PrintAttributes;
+          import android.print.PrintDocumentAdapter;
+          import android.print.PrintManager;
+          import android.util.Base64;
           import android.view.Gravity;
           import android.view.View;
           import android.view.Window;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import androidx.activity.result.ActivityResultLauncher;
+          import androidx.activity.result.contract.ActivityResultContracts;
           import androidx.core.graphics.Insets;
           import androidx.core.view.ViewCompat;
           import androidx.core.view.WindowCompat;
           import androidx.core.view.WindowInsetsCompat;
           import androidx.core.view.WindowInsetsControllerCompat;
           import com.getcapacitor.BridgeActivity;
+          import java.io.OutputStream;
 
           public class MainActivity extends BridgeActivity {
+              private ActivityResultLauncher<Intent> saveLauncher;
+              private byte[] pendingBytes;
+              private WebView printWebView;
+
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+
+                  saveLauncher = registerForActivityResult(
+                      new ActivityResultContracts.StartActivityForResult(),
+                      result -> {
+                          String status = "cancelled";
+                          if (result.getResultCode() == RESULT_OK
+                                  && result.getData() != null
+                                  && result.getData().getData() != null
+                                  && pendingBytes != null) {
+                              try (OutputStream os = getContentResolver().openOutputStream(result.getData().getData(), "wt")) {
+                                  if (os == null) {
+                                      throw new Exception("stream null");
+                                  }
+                                  os.write(pendingBytes);
+                                  os.flush();
+                                  status = "saved";
+                              } catch (Exception e) {
+                                  status = "error";
+                              }
+                          }
+                          pendingBytes = null;
+                          notifyJs(status);
+                      });
+
+                  getBridge().getWebView().addJavascriptInterface(new NativeApi(), "AndroidNative");
+
                   final Window window = getWindow();
                   WindowCompat.setDecorFitsSystemWindows(window, false);
                   View content = findViewById(android.R.id.content);
@@ -93,6 +135,60 @@ jobs:
                       return WindowInsetsCompat.CONSUMED;
                   });
                   ViewCompat.requestApplyInsets(content);
+              }
+
+              private void notifyJs(final String status) {
+                  final String js = "window.dispatchEvent(new CustomEvent('nativeSaved',{detail:{status:'" + status + "'}}));";
+                  runOnUiThread(() -> getBridge().getWebView().evaluateJavascript(js, null));
+              }
+
+              private void doPrint(String html, final String jobName, final int widthMm) {
+                  final WebView wv = new WebView(this);
+                  printWebView = wv;
+                  wv.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public void onPageFinished(WebView view, String url) {
+                          PrintManager pm = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+                          PrintDocumentAdapter adapter = view.createPrintDocumentAdapter(jobName);
+                          PrintAttributes.Builder pb = new PrintAttributes.Builder();
+                          if (widthMm > 0) {
+                              int w = (int) (widthMm / 25.4f * 1000f);
+                              pb.setMediaSize(new PrintAttributes.MediaSize("struk", "Struk " + widthMm + " mm", w, 11000));
+                              pb.setMinMargins(PrintAttributes.Margins.NO_MARGINS);
+                          }
+                          pm.print(jobName, adapter, pb.build());
+                      }
+                  });
+                  wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+              }
+
+              private class NativeApi {
+                  @JavascriptInterface
+                  public void saveFile(final String name, final String mime, final String base64) {
+                      try {
+                          pendingBytes = Base64.decode(base64, Base64.DEFAULT);
+                      } catch (Exception e) {
+                          notifyJs("error");
+                          return;
+                      }
+                      runOnUiThread(() -> {
+                          try {
+                              Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                              i.addCategory(Intent.CATEGORY_OPENABLE);
+                              i.setType(mime);
+                              i.putExtra(Intent.EXTRA_TITLE, name);
+                              saveLauncher.launch(i);
+                          } catch (Exception e) {
+                              pendingBytes = null;
+                              notifyJs("error");
+                          }
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void printHtml(final String html, final String jobName, final int widthMm) {
+                      runOnUiThread(() -> doPrint(html, jobName, widthMm));
+                  }
               }
           }
           JAVA
